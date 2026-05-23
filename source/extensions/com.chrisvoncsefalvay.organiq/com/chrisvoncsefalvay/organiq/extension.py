@@ -220,6 +220,7 @@ class OrganiqExtension(omni.ext.IExt):
         self._ui_build_task: asyncio.Task | None = None
         self._auto_show_task: asyncio.Task | None = None
         self._content_browser_task: asyncio.Task | None = None
+        self._timeline_task: asyncio.Task | None = None
         self._models: dict[str, object] = {}
         self._status = "ready"
         self._progress_model = _PercentProgressModel(0.0)
@@ -265,6 +266,7 @@ class OrganiqExtension(omni.ext.IExt):
         ]
         add_menu_items(self._menu_items, "Utilities")
         self._auto_show_task = asyncio.ensure_future(self._show_window_on_startup())
+        self._timeline_task = asyncio.ensure_future(self._show_timeline_on_startup())
         self._schedule_content_browser_reveal(DEFAULT_OUTPUT_ROOT, select_file=False, show_content=False, navigate=False)
         carb.log_info("Organiq extension started.")
 
@@ -281,6 +283,8 @@ class OrganiqExtension(omni.ext.IExt):
             self._auto_show_task.cancel()
         if self._content_browser_task and not self._content_browser_task.done():
             self._content_browser_task.cancel()
+        if self._timeline_task and not self._timeline_task.done():
+            self._timeline_task.cancel()
         self._destroy_path_dialog()
         remove_menu_items(self._menu_items, "Utilities")
         self._label_tree_model = None
@@ -308,6 +312,22 @@ class OrganiqExtension(omni.ext.IExt):
         self._window.visible = True
         self._request_build_ui()
         carb.log_info("Organiq window shown")
+
+    async def _show_timeline_on_startup(self):
+        app = omni.kit.app.get_app()
+        for _ in range(10):
+            await app.next_update_async()
+        try:
+            manager = app.get_extension_manager()
+            for extension_name in (
+                "omni.kit.widget.timeline",
+                "omni.anim.widget.timeline",
+                "omni.anim.window.timeline",
+            ):
+                manager.set_extension_enabled_immediate(extension_name, True)
+            ui.Workspace.show_window("Timeline toolbar", True)
+        except Exception as exc:  # noqa: BLE001 - timeline visibility is best-effort UI setup.
+            carb.log_warn(f"Organiq could not show the timeline toolbar: {exc}")
 
     def _build_ui(self):
         self._apply_window_width()
