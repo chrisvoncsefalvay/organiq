@@ -21,6 +21,8 @@ If a manually supplied bundle name is not supported, or a cached bundle is missi
 
 ## Workflow demo
 
+![Organiq workflow preview](docs/assets/organiq-workflow-preview.png)
+
 ![Organiq workflow demo](docs/assets/organiq-workflow-demo.gif)
 
 [Watch the MP4 version](docs/assets/organiq-workflow-demo.mp4)
