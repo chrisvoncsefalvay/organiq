@@ -1,4 +1,4 @@
-name: ci
+name: CI
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
+    name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -19,29 +19,29 @@ jobs:
           - windows-latest
 
     steps:
-      - name: checkout
+      - name: Check out
         uses: actions/checkout@v4
 
-      - name: set up python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
-      - name: install test dependencies
+      - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install --prefer-binary --constraint constraints/isaac-5.1.txt ".[dev]"
 
-      - name: run tests
+      - name: Run tests
         run: python -m pytest
 
-      - name: run extension checks
+      - name: Run extension checks
         run: |
           python tools/check_extension.py
           python -m compileall -q source tests tools
 
-      - name: package release archives
+      - name: Package release archives
         run: |
           python tools/package_extension.py --clean
           python tools/check_distribution.py --require-archives

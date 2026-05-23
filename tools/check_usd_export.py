@@ -18,7 +18,7 @@ def main() -> int:
 
     sys.path.insert(0, str(EXT_ROOT))
 
-    from pxr import Sdf, Usd, UsdGeom, UsdLux, UsdPhysics, UsdShade
+    from pxr import Kind, Sdf, Usd, UsdGeom, UsdLux, UsdPhysics, UsdShade
 
     from com.chrisvoncsefalvay.organiq.models import DistanceFieldMetadata, MeshArtifact
     from com.chrisvoncsefalvay.organiq.usd_writer import (
@@ -40,7 +40,7 @@ def main() -> int:
 
     stage = Usd.Stage.Open(str(result.path))
     _require(stage is not None, f"could not open {result.path}")
-    _verify_exported_stage(stage, UsdGeom, UsdLux, UsdPhysics, UsdShade)
+    _verify_exported_stage(stage, Kind, UsdGeom, UsdLux, UsdPhysics, UsdShade)
 
     preview_stage = Usd.Stage.CreateInMemory()
     preview = preview_meshes_on_stage(preview_stage, meshes)
@@ -54,8 +54,10 @@ def main() -> int:
     _require(instance_stage.GetPrimAtPath("/World/Organiq_preview"), "preview setup failed")
     instantiate_usd_on_stage(instance_stage, single_result.path, "/World/Organiq_instance")
     instance_path = instantiate_usd_on_stage(instance_stage, result.path, "/World/Organiq_instance")
+    copy_path = instantiate_usd_on_stage(instance_stage, result.path, "/World/Organiq_instance_copy")
     _require(not instance_stage.GetPrimAtPath("/World/Organiq_preview"), "preview root was not removed")
-    _verify_instanced_stage(instance_stage, instance_path, Sdf, UsdGeom)
+    _verify_instanced_stage(instance_stage, instance_path, Sdf, UsdGeom, UsdLux, UsdPhysics)
+    _verify_instanceable_components(instance_stage, instance_path, copy_path)
 
     print(f"usd={result.path}")
     print(f"rigid={result.rigid_count}")
@@ -201,11 +203,32 @@ def _cube_mesh(mesh_type, distance_field_type, label_value: int, label_name: str
     )
 
 
-def _verify_exported_stage(stage, UsdGeom, UsdLux, UsdPhysics, UsdShade) -> None:
+def _verify_exported_stage(stage, Kind, UsdGeom, UsdLux, UsdPhysics, UsdShade) -> None:
     _require(stage.GetDefaultPrim().GetPath().pathString == "/World", "default prim is not /World")
     _require(abs(UsdGeom.GetStageMetersPerUnit(stage) - 1.0) < 1.0e-9, "stage is not metre-authored")
     _require(UsdGeom.GetStageUpAxis(stage) == UsdGeom.Tokens.z, "stage is not z-up")
     _require(abs(UsdPhysics.GetStageKilogramsPerUnit(stage) - 1.0) < 1.0e-9, "stage is not kilogram-authored")
+    _require(stage.GetPrimAtPath("/World").GetMetadata("kind") == Kind.Tokens.assembly, "world is not an assembly")
+    _require(
+        stage.GetPrimAtPath("/World/organiq").GetMetadata("kind") == Kind.Tokens.component,
+        "anatomy is not a component",
+    )
+    _require(
+        stage.GetPrimAtPath("/World/organiq").GetAttribute("organiq:assetRole").Get() == "anatomyComponent",
+        "anatomy component role missing",
+    )
+    _require(stage.GetPrimAtPath("/World/organiq").GetAttribute("organiq:meshCount").Get() == 3, "mesh count missing")
+    _require(stage.GetPrimAtPath("/World/organiq").HasAPI(UsdGeom.ModelAPI), "anatomy component extents hint missing")
+    _require(stage.GetPrimAtPath("/World/organiq/Looks").IsA(UsdGeom.Scope), "component looks scope missing")
+    _require(
+        stage.GetPrimAtPath("/World/organiq/PhysicsMaterials").IsA(UsdGeom.Scope),
+        "component physics material scope missing",
+    )
+    _require(not stage.GetPrimAtPath("/World/Looks").IsValid(), "top-level looks scope is not component-local")
+    _require(
+        not stage.GetPrimAtPath("/World/PhysicsMaterials").IsValid(),
+        "top-level physics materials are not component-local",
+    )
 
     _require(stage.GetPrimAtPath("/World/camera").IsA(UsdGeom.Camera), "export camera missing")
     _require(stage.GetPrimAtPath("/World/lighting/dome").IsA(UsdLux.DomeLight), "dome light missing")
@@ -213,12 +236,30 @@ def _verify_exported_stage(stage, UsdGeom, UsdLux, UsdPhysics, UsdShade) -> None
     _require(stage.GetPrimAtPath("/World/lighting/rim").IsA(UsdLux.DistantLight), "rim light missing")
     _require(stage.GetPrimAtPath("/World/physicsScene").IsA(UsdPhysics.Scene), "physics scene missing")
 
-    _verify_render_mesh(stage, "/World/organiq/bone/mesh", UsdGeom, UsdShade)
-    _verify_render_mesh(stage, "/World/organiq/liver/mesh", UsdGeom, UsdShade)
-    _verify_render_mesh(stage, "/World/organiq/skin_shell/mesh", UsdGeom, UsdShade)
-    _verify_textured_material(stage, "/World/Looks/bone_material", UsdShade)
-    _verify_textured_material(stage, "/World/Looks/liver_material", UsdShade)
-    _verify_textured_material(stage, "/World/Looks/skin_shell_material", UsdShade)
+    _verify_render_mesh(stage, "/World/organiq/bone/mesh", UsdGeom, UsdShade, require_full_material=True)
+    _verify_render_mesh(stage, "/World/organiq/liver/mesh", UsdGeom, UsdShade, require_full_material=True)
+    _verify_render_mesh(stage, "/World/organiq/skin_shell/mesh", UsdGeom, UsdShade, require_full_material=True)
+    _verify_viewport_material(
+        stage,
+        "/World/organiq/Looks/bone_material",
+        "/World/organiq/Looks/bone_material_textured",
+        UsdShade,
+    )
+    _verify_viewport_material(
+        stage,
+        "/World/organiq/Looks/liver_material",
+        "/World/organiq/Looks/liver_material_textured",
+        UsdShade,
+    )
+    _verify_viewport_material(
+        stage,
+        "/World/organiq/Looks/skin_shell_material",
+        "/World/organiq/Looks/skin_shell_material_textured",
+        UsdShade,
+    )
+    _verify_textured_material(stage, "/World/organiq/Looks/bone_material_textured", UsdShade)
+    _verify_textured_material(stage, "/World/organiq/Looks/liver_material_textured", UsdShade)
+    _verify_textured_material(stage, "/World/organiq/Looks/skin_shell_material_textured", UsdShade)
     _verify_rigid_body(stage, "/World/organiq/bone", "/World/organiq/bone/mesh", UsdPhysics)
     _verify_deformable_body(stage, "/World/organiq/liver", "/World/organiq/liver/mesh", UsdGeom, UsdPhysics)
     _verify_surface_collision_shell(stage, "/World/organiq/skin_shell", "/World/organiq/skin_shell/mesh", UsdPhysics)
@@ -234,7 +275,7 @@ def _verify_preview_stage(stage, preview, UsdGeom, UsdLux, UsdShade) -> None:
         _verify_render_mesh(stage, mesh_path, UsdGeom, UsdShade)
 
 
-def _verify_instanced_stage(stage, instance_path: str, Sdf, UsdGeom) -> None:
+def _verify_instanced_stage(stage, instance_path: str, Sdf, UsdGeom, UsdLux, UsdPhysics) -> None:
     root = stage.GetPrimAtPath(instance_path)
     _require(root.IsValid(), "instance root missing")
     source_attr = root.GetAttribute("organiq:sourceUsd")
@@ -244,6 +285,15 @@ def _verify_instanced_stage(stage, instance_path: str, Sdf, UsdGeom) -> None:
     camera_path = root.GetAttribute("organiq:viewCamera").Get()
     _require(camera_path == f"{instance_path}/view_camera", f"instance view camera is {camera_path}")
     _require(stage.GetPrimAtPath(camera_path).IsA(UsdGeom.Camera), "instance camera missing")
+    _require(stage.GetPrimAtPath(f"{instance_path}/lighting/dome").IsA(UsdLux.DomeLight), "instance dome light missing")
+    _require(stage.GetPrimAtPath(f"{instance_path}/lighting/key").IsA(UsdLux.RectLight), "instance key light missing")
+    _require(stage.GetPrimAtPath(f"{instance_path}/lighting/rim").IsA(UsdLux.DistantLight), "instance rim light missing")
+    component_path = root.GetAttribute("organiq:instanceableComponentPath").Get()
+    _require(component_path == f"{instance_path}/organiq", f"instanceable component path is {component_path}")
+    component = stage.GetPrimAtPath(component_path)
+    _require(component.IsInstanceable(), "component reference is not marked instanceable")
+    _require(component.IsInstance(), "component reference is not an instance")
+    _require(stage.GetPrimAtPath("/World/physicsScene").IsA(UsdPhysics.Scene), "instantiated stage physics scene missing")
     for label_name in ("bone", "liver", "skin_shell"):
         mesh_path = f"{instance_path}/organiq/{label_name}/mesh"
         mesh_prim = stage.GetPrimAtPath(mesh_path)
@@ -253,7 +303,15 @@ def _verify_instanced_stage(stage, instance_path: str, Sdf, UsdGeom) -> None:
         _require(imageable.ComputePurpose() == UsdGeom.Tokens.default_, f"{mesh_path} is not default purpose")
 
 
-def _verify_render_mesh(stage, path: str, UsdGeom, UsdShade) -> None:
+def _verify_instanceable_components(stage, first_path: str, second_path: str) -> None:
+    first = stage.GetPrimAtPath(f"{first_path}/organiq")
+    second = stage.GetPrimAtPath(f"{second_path}/organiq")
+    _require(first.IsInstanceable() and second.IsInstanceable(), "instanceable flags missing")
+    _require(first.IsInstance() and second.IsInstance(), "instance prims did not compose as instances")
+    _require(first.GetPrototype().GetPath() == second.GetPrototype().GetPath(), "instances do not share a prototype")
+
+
+def _verify_render_mesh(stage, path: str, UsdGeom, UsdShade, require_full_material: bool = False) -> None:
     prim = stage.GetPrimAtPath(path)
     _require(prim.IsA(UsdGeom.Mesh), f"{path} is not a mesh")
     mesh = UsdGeom.Mesh(prim)
@@ -267,6 +325,10 @@ def _verify_render_mesh(stage, path: str, UsdGeom, UsdShade) -> None:
     material_targets = UsdShade.MaterialBindingAPI(prim).GetDirectBindingRel().GetTargets()
     _require(material_targets, f"{path} has no visual material binding")
     _require(stage.GetPrimAtPath(material_targets[0]).IsValid(), f"{path} visual material target is invalid")
+    if require_full_material:
+        full_targets = prim.GetRelationship("material:binding:full").GetTargets()
+        _require(full_targets, f"{path} has no full-quality material binding")
+        _require(stage.GetPrimAtPath(full_targets[0]).IsValid(), f"{path} full material target is invalid")
 
 
 def _verify_rigid_body(stage, root_path: str, mesh_path: str, UsdPhysics) -> None:
@@ -288,30 +350,40 @@ def _verify_deformable_body(stage, root_path: str, mesh_path: str, UsdGeom, UsdP
     mesh = stage.GetPrimAtPath(mesh_path)
     physics_root = stage.GetPrimAtPath(f"{root_path}/physics")
     cooking_mesh = stage.GetPrimAtPath(f"{root_path}/physics/cooking_mesh")
-    _require(physics_root.IsValid(), "liver physics proxy root missing")
-    _require(cooking_mesh.IsA(UsdGeom.Mesh), "liver cooking mesh missing")
     _require(
-        physics_root.GetRelationship("physxDeformableBody:cookingSourceMesh").GetTargets(),
-        "liver cooking source missing",
+        root.GetAttribute("organiq:deformableAuthoring").Get() == "surface_deformable",
+        "liver authoring is not surface deformable",
+    )
+    _require(root.GetAttribute("organiq:volumeTetCooking").Get() is False, "liver volume tet cooking is enabled")
+    _require(mesh.GetAttribute("organiq:volumeTetCooking").Get() is False, "liver mesh volume tet cooking is enabled")
+    _require(not physics_root.IsValid(), "liver still has a volume physics proxy root")
+    _require(not cooking_mesh.IsValid(), "liver still has a cooking mesh")
+    _require(
+        not root.GetRelationship("physxDeformableBody:cookingSourceMesh").GetTargets(),
+        "liver root has a cooking source",
     )
     _require(
-        physics_root.GetAttribute("physxDeformable:simulationHexahedralResolution").Get(),
-        "liver hex resolution missing",
+        not mesh.GetRelationship("physxDeformableBody:cookingSourceMesh").GetTargets(),
+        "liver mesh has a cooking source",
     )
-    _require(physics_root.GetAttribute("physxDeformableBody:resolution").Get(), "liver new hex resolution missing")
-    _require(physics_root.GetAttribute("physxDeformable:numberOfTetsPerHex").Get(), "liver tets-per-hex missing")
+    _require(not root.GetAttribute("physxDeformableBody:resolution").HasAuthoredValue(), "liver root has tet resolution")
+    _require(
+        not root.GetAttribute("physxDeformable:numberOfTetsPerHex").HasAuthoredValue(),
+        "liver root has tets-per-hex",
+    )
     _require(mesh.HasAPI(UsdPhysics.CollisionAPI), "liver mesh has no collision API")
     imageable = UsdGeom.Imageable(mesh)
     _require(imageable.ComputeVisibility() == UsdGeom.Tokens.inherited, "liver visual mesh is not visible")
     _require(imageable.ComputePurpose() == UsdGeom.Tokens.default_, "liver visual mesh is not default purpose")
-    proxy_imageable = UsdGeom.Imageable(physics_root)
-    _require(proxy_imageable.ComputeVisibility() == UsdGeom.Tokens.invisible, "liver physics proxy is visible")
+    rest_points = mesh.GetAttribute("omniphysics:restShapePoints").Get()
+    rest_tri_indices = mesh.GetAttribute("omniphysics:restTriVtxIndices").Get()
+    _require(rest_points, "liver surface rest shape points missing")
+    _require(rest_tri_indices, "liver surface rest triangle indices missing")
     points = mesh.GetAttribute("deformablePose:default:omniphysics:points").Get()
     purposes = mesh.GetAttribute("deformablePose:default:omniphysics:purposes").Get()
     _require(points, "liver deformable pose points missing")
     _require(purposes and "bindPose" in purposes, "liver bind pose purpose missing")
     _verify_physics_material_binding(root, "liver root")
-    _verify_physics_material_binding(physics_root, "liver physics proxy")
     _verify_physics_material_binding(mesh, "liver mesh")
 
 
@@ -334,19 +406,38 @@ def _verify_physics_material_binding(prim, label: str) -> None:
     _require(targets, f"{label} has no physics material binding")
 
 
+def _verify_viewport_material(stage, material_path: str, textured_material_path: str, UsdShade) -> None:
+    material_prim = stage.GetPrimAtPath(material_path)
+    _require(material_prim.IsA(UsdShade.Material), f"{material_path} is not a material")
+    material = UsdShade.Material(material_prim)
+    surface_output = material.GetSurfaceOutput()
+    _require(surface_output and surface_output.HasConnectedSource(), f"{material_path} universal surface missing")
+    mdl_output = material.GetSurfaceOutput("mdl")
+    _require(not (mdl_output and mdl_output.GetAttr()), f"{material_path} has an active MDL surface")
+    textured_targets = material_prim.GetRelationship("organiq:texturedMaterial").GetTargets()
+    _require(
+        textured_targets and str(textured_targets[0]) == textured_material_path,
+        f"{material_path} textured material target is wrong",
+    )
+
+
 def _verify_textured_material(stage, material_path: str, UsdShade) -> None:
     material = stage.GetPrimAtPath(material_path)
     _require(material.IsA(UsdShade.Material), f"{material_path} is not a material")
-    preview = UsdShade.Shader(stage.GetPrimAtPath(f"{material_path}/preview"))
-    _require(preview.GetPrim().IsValid(), f"{material_path} preview shader missing")
-    _require(preview.GetIdAttr().Get() == "UsdPreviewSurface", f"{material_path} preview shader is wrong")
-    surface_output = UsdShade.Material(material).GetSurfaceOutput()
-    _require(surface_output and surface_output.HasConnectedSource(), f"{material_path} universal surface missing")
+    surface_output = UsdShade.Material(material).GetSurfaceOutput("mdl")
+    _require(surface_output and surface_output.HasConnectedSource(), f"{material_path} MDL surface missing")
     shader = UsdShade.Shader(stage.GetPrimAtPath(f"{material_path}/shader"))
     _require(shader.GetPrim().IsValid(), f"{material_path} shader missing")
     for input_name in ("diffuse_texture", "normalmap_texture", "bump_factor"):
         value = shader.GetInput(input_name).Get()
         _require(value is not None, f"{material_path} {input_name} missing")
+        if input_name.endswith("_texture"):
+            _verify_portable_asset_path(str(value.path), f"{material_path} {input_name}")
+
+
+def _verify_portable_asset_path(value: str, label: str) -> None:
+    _require(value and "\\" not in value, f"{label} is not slash-normalised: {value}")
+    _require(":" not in value and not value.startswith("/"), f"{label} is not relative: {value}")
 
 
 def _verify_texture_files(texture_dir: Path) -> None:

@@ -7,6 +7,7 @@ def test_extension_manifest_points_at_direct_package():
         Path("source/extensions/com.chrisvoncsefalvay.organiq/config/extension.toml").read_text(encoding="utf-8")
     )
     assert manifest["package"]["name"] == "com.chrisvoncsefalvay.organiq"
+    assert manifest["package"]["description"] == "Sim Ready anatomy from DICOM volumes"
     assert not manifest["package"]["name"].startswith("omni")
     assert manifest["package"]["repository"] == "https://github.com/chrisvoncsefalvay/organiq"
     assert {"omniverse", "kit", "extension"}.issubset(set(manifest["package"]["keywords"]))

@@ -32,12 +32,17 @@ async def frame_paths_next_update(
         if expanded:
             frame_paths = expanded
     camera_set = False
+    camera_framed = False
     if stage is not None:
         make_renderable(stage, frame_paths)
         if camera_path:
-            frame_camera_to_paths(stage, camera_path, frame_paths)
+            camera_framed = frame_camera_to_paths(stage, camera_path, frame_paths)
         camera_set = set_viewport_camera(stage, camera_path)
-    framed = select_and_frame_paths(frame_paths)
+        if camera_set and camera_framed:
+            await omni.kit.app.get_app().next_update_async()
+    framed = select_and_frame_paths(frame_paths, frame_viewport=True)
+    if camera_set and camera_framed:
+        framed = True
     return ViewportFrameResult(tuple(frame_paths), camera_set, framed)
 
 
@@ -48,8 +53,12 @@ def renderable_mesh_paths(stage, root_path: str) -> list[str]:
     if not root_prim:
         return []
     paths: list[str] = []
-    for prim in Usd.PrimRange(root_prim):
+    for prim in Usd.PrimRange(root_prim, Usd.TraverseInstanceProxies(Usd.PrimAllPrimsPredicate)):
         if not prim.IsA(UsdGeom.Mesh):
+            continue
+        path = str(prim.GetPath())
+        role = prim.GetAttribute("organiq:role").Get() if prim.GetAttribute("organiq:role") else None
+        if role == "deformablePhysicsProxy" or "/physics/" in path:
             continue
         is_organiq_mesh = bool(prim.GetAttribute("organiq:labelName"))
         imageable = UsdGeom.Imageable(prim)
@@ -57,7 +66,7 @@ def renderable_mesh_paths(stage, root_path: str) -> list[str]:
             continue
         purpose = imageable.ComputePurpose()
         if is_organiq_mesh or purpose in (UsdGeom.Tokens.default_, UsdGeom.Tokens.render, UsdGeom.Tokens.proxy):
-            paths.append(str(prim.GetPath()))
+            paths.append(path)
     return paths
 
 
@@ -67,6 +76,11 @@ def make_renderable(stage, paths: list[str]) -> None:
     for path in paths:
         prim = stage.GetPrimAtPath(path)
         if not prim:
+            continue
+        if prim.IsInstanceProxy():
+            continue
+        role = prim.GetAttribute("organiq:role").Get() if prim.GetAttribute("organiq:role") else None
+        if role == "deformablePhysicsProxy" or "/physics/" in str(prim.GetPath()):
             continue
         imageable = UsdGeom.Imageable(prim)
         if not imageable:
@@ -119,6 +133,7 @@ def frame_camera_to_paths(stage, camera_path: str, paths: list[str]) -> bool:
         pass
     xformable.MakeMatrixXform().Set(view.GetInverse())
     camera = UsdGeom.Camera(camera_prim)
+    camera.CreateFocalLengthAttr(55.0)
     camera.CreateFocusDistanceAttr(radius * 2.4)
     camera.CreateClippingRangeAttr(Gf.Vec2f(0.001, max(radius * 20.0, 10.0)))
     return True
@@ -141,10 +156,11 @@ def set_viewport_camera(stage, camera_path: str | None) -> bool:
         return False
 
 
-def select_and_frame_paths(paths: list[str]) -> bool:
+def select_and_frame_paths(paths: list[str], frame_viewport: bool = True) -> bool:
     path_list = [str(path) for path in paths if path]
     if not path_list:
         return False
+    selected = True
     try:
         omni.kit.commands.execute(
             "SelectPrims",
@@ -153,7 +169,10 @@ def select_and_frame_paths(paths: list[str]) -> bool:
             expand_in_stage=True,
         )
     except Exception as exc:
+        selected = False
         carb.log_warn(f"Organiq could not select preview prims: {exc}")
+    if not frame_viewport:
+        return selected
     try:
         from omni.kit.viewport.utility import frame_viewport_prims, get_active_viewport
 

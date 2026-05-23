@@ -4,7 +4,7 @@ version = "0.1.0"
 category = "Simulation"
 feature = true
 title = "Organiq"
-description = "CT DICOM to MONAI segmentation, USD meshing and Isaac physics authoring"
+description = "Sim Ready anatomy from DICOM volumes"
 authors = ["Chris von Csefalvay"]
 repository = "https://github.com/chrisvoncsefalvay/organiq"
 keywords = ["omniverse", "kit", "extension", "isaac", "dicom", "ct", "monai", "usd", "physics"]
@@ -22,6 +22,7 @@ kit = ["107.3.3"]
 [dependencies]
 "isaacsim.gui.components" = {}
 "omni.kit.menu.utils" = {}
+"omni.kit.window.content_browser" = {}
 "omni.kit.window.filepicker" = {}
 "omni.kit.viewport.utility" = {}
 "omni.kit.uiapp" = {}

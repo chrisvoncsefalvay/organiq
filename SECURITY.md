@@ -1,4 +1,4 @@
-# security
+# Security
 
 Report security issues through GitHub private vulnerability reporting if it is enabled on the repository.
 

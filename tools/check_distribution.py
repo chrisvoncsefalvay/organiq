@@ -18,7 +18,6 @@ MANIFEST_PATH = EXTENSION_ROOT / "config" / "extension.toml"
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 BUILD_ROOT = REPO_ROOT / "build"
 DIST_ROOT = REPO_ROOT / "dist"
-PLATFORMS = ("linux-x86_64", "windows-x86_64")
 REQUIRED_PACKAGE_FIELDS = (
     "name",
     "version",
@@ -76,7 +75,7 @@ def main() -> int:
     _check_manifest_metadata(checks, package)
     _check_pyproject(checks, package, pyproject)
     _check_extension_structure(checks, package)
-    _check_release_files(checks)
+    _check_release_files(checks, package)
     _check_repo_hygiene(checks)
     _check_archives(checks, package, require_archives=args.require_archives)
 
@@ -177,7 +176,7 @@ def _check_extension_structure(checks: list[dict[str, str]], package: dict[str, 
     _record(checks, "preview dimensions", preview_size == (1200, 675), str(preview_size))
 
 
-def _check_release_files(checks: list[dict[str, str]]) -> None:
+def _check_release_files(checks: list[dict[str, str]], package: dict[str, Any]) -> None:
     required = (
         REPO_ROOT / "LICENSE",
         REPO_ROOT / "CONTRIBUTING.md",
@@ -193,13 +192,25 @@ def _check_release_files(checks: list[dict[str, str]]) -> None:
     distribution_text = _read_text(REPO_ROOT / "docs" / "distribution.md")
     release_workflow = _read_text(REPO_ROOT / ".github" / "workflows" / "release.yml")
     ci_workflow = _read_text(REPO_ROOT / ".github" / "workflows" / "ci.yml")
+    constraints_text = _read_text(REPO_ROOT / "constraints" / "isaac-5.1.txt")
 
     _record(checks, "distribution docs mention GitHub topic", "omniverse-kit-extension" in distribution_text, "docs/distribution.md")
-    _record(checks, "distribution docs mention release archives", "windows-x86_64" in distribution_text and "linux-x86_64" in distribution_text, "docs/distribution.md")
+    _record(
+        checks,
+        "distribution docs mention Kit importable archive",
+        _expected_archive_name(package) in distribution_text,
+        "docs/distribution.md",
+    )
     _record(checks, "release workflow tags", "tags:" in release_workflow and "v*" in release_workflow, ".github/workflows/release.yml")
     _record(checks, "release workflow uploads archives", "gh release upload" in release_workflow, ".github/workflows/release.yml")
     _record(checks, "ci workflow runs distribution check", "tools/check_distribution.py" in ci_workflow, ".github/workflows/ci.yml")
     _record(checks, "ci workflow runs tests", "python -m pytest" in ci_workflow, ".github/workflows/ci.yml")
+    _record(
+        checks,
+        "pip constraints exclude extras",
+        not bool(re.search(r"(?m)^\s*[A-Za-z0-9_.-]+\[", constraints_text)),
+        "constraints/isaac-5.1.txt",
+    )
 
 
 def _check_repo_hygiene(checks: list[dict[str, str]]) -> None:
@@ -230,29 +241,32 @@ def _check_archives(checks: list[dict[str, str]], package: dict[str, Any], requi
         _record(checks, "release archives", True, "not required for this run")
         return
 
-    repository = str(package.get("repository", ""))
-    namespace, repo = _github_namespace_and_repo(repository)
-    tag = f"v{package.get('version')}"
-    expected = [DIST_ROOT / f"{namespace}-{repo}-{platform}-{tag}.zip" for platform in PLATFORMS]
+    expected = [DIST_ROOT / _expected_archive_name(package)]
+    expected_names = {archive.name for archive in expected}
+    existing_archives = {archive.name for archive in DIST_ROOT.glob("*.zip")} if DIST_ROOT.exists() else set()
+    unexpected_archives = sorted(existing_archives - expected_names)
+    _record(checks, "no stale release archives", not unexpected_archives, ",".join(unexpected_archives))
 
     for archive in expected:
         _record(checks, f"archive {archive.name}", archive.exists(), _path_evidence(archive))
+        _record(checks, f"archive name is Kit importable {archive.name}", _archive_name_is_kit_importable(archive, package), archive.name)
         if archive.exists():
             _check_archive_contents(checks, archive)
 
 
 def _check_archive_contents(checks: list[dict[str, str]], archive: Path) -> None:
     required = {
-        f"{EXTENSION_NAME}/config/extension.toml",
-        f"{EXTENSION_NAME}/docs/README.md",
-        f"{EXTENSION_NAME}/docs/CHANGELOG.md",
-        f"{EXTENSION_NAME}/data/icon.png",
-        f"{EXTENSION_NAME}/data/preview.png",
-        f"{EXTENSION_NAME}/com/chrisvoncsefalvay/organiq/__init__.py",
+        "config/extension.toml",
+        "docs/README.md",
+        "docs/CHANGELOG.md",
+        "data/icon.png",
+        "data/preview.png",
+        "com/chrisvoncsefalvay/organiq/__init__.py",
     }
     with zipfile.ZipFile(archive) as package:
         names = set(package.namelist())
-    forbidden_prefixes = (f"{EXTENSION_NAME}/tests/", f"{EXTENSION_NAME}/tools/")
+    nested_manifest = f"{EXTENSION_NAME}/config/extension.toml"
+    forbidden_prefixes = ("tests/", "tools/", f"{EXTENSION_NAME}/")
     forbidden_suffixes = (".pyc", ".pyo", ".dcm", ".dicom", ".nii", ".nii.gz", ".usd", ".usda", ".usdc", ".pt", ".pth")
     forbidden = [
         name
@@ -261,7 +275,16 @@ def _check_archive_contents(checks: list[dict[str, str]], archive: Path) -> None
     ]
 
     _record(checks, f"archive contents {archive.name}", required.issubset(names), f"entries={len(names)}")
+    _record(checks, f"archive import root {archive.name}", nested_manifest not in names, "config/extension.toml at archive root")
     _record(checks, f"archive excludes generated data {archive.name}", not forbidden, ",".join(forbidden[:8]))
+
+
+def _expected_archive_name(package: dict[str, Any]) -> str:
+    return f"{package.get('name')}-{package.get('version')}.zip"
+
+
+def _archive_name_is_kit_importable(archive: Path, package: dict[str, Any]) -> bool:
+    return archive.name == _expected_archive_name(package)
 
 
 def _repo_files() -> list[Path]:
@@ -305,15 +328,6 @@ def _is_github_repository(repository_url: str) -> bool:
     parsed = urlparse(repository_url)
     parts = [part for part in parsed.path.strip("/").split("/") if part]
     return parsed.scheme in {"http", "https"} and parsed.netloc.lower() == "github.com" and len(parts) >= 2
-
-
-def _github_namespace_and_repo(repository_url: str) -> tuple[str, str]:
-    parsed = urlparse(repository_url)
-    parts = [part for part in parsed.path.strip("/").split("/") if part]
-    if len(parts) < 2:
-        return "", ""
-    repo = parts[1][:-4] if parts[1].endswith(".git") else parts[1]
-    return parts[0], repo
 
 
 def _has_value(value: Any) -> bool:

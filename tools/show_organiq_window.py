@@ -37,6 +37,19 @@ def _write_report(status: str, window_found: bool, window_visible: bool) -> None
     (BUILD_ROOT / "organiq_launch_check.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 
 
+def _dock_ratio_for_fixed_width() -> float:
+    from com.chrisvoncsefalvay.organiq.extension import DOCK_RATIO, MAX_DOCK_RATIO, WINDOW_WIDTH
+
+    try:
+        width_getter = getattr(ui.Workspace, "get_main_window_width", None)
+        main_width = float(width_getter() if width_getter is not None else ui.get_main_window_width())
+    except Exception:
+        return DOCK_RATIO
+    if main_width <= 0:
+        return DOCK_RATIO
+    return min(MAX_DOCK_RATIO, max(DOCK_RATIO, WINDOW_WIDTH / main_width))
+
+
 async def show_organiq_window() -> None:
     app = omni.kit.app.get_app()
     for _ in range(240):
@@ -45,7 +58,7 @@ async def show_organiq_window() -> None:
             window.visible = True
             viewport = ui.Workspace.get_window("Viewport")
             if viewport:
-                window.dock_in(viewport, ui.DockPosition.LEFT, 0.24)
+                window.dock_in(viewport, ui.DockPosition.LEFT, _dock_ratio_for_fixed_width())
             _write_report("ok", True, bool(window.visible))
             return
         await app.next_update_async()

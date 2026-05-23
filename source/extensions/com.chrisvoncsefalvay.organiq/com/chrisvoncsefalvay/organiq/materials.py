@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import struct
 import zlib
@@ -14,6 +15,7 @@ from .models import TissueDefaults
 class TissueTextureSet:
     diffuse: Path
     normal: Path
+    asset_anchor: Path | None = None
 
 
 def create_visual_material(
@@ -22,11 +24,42 @@ def create_visual_material(
     defaults: TissueDefaults,
     texture_dir: str | Path | None = None,
     material_key: str | None = None,
+    asset_anchor: str | Path | None = None,
 ):
-    from pxr import Gf, Sdf, UsdShade
+    from pxr import Sdf, UsdShade
 
     material = UsdShade.Material.Define(stage, material_path)
     _author_preview_surface(stage, material, material_path, defaults)
+
+    texture_set = ensure_tissue_textures(defaults, texture_dir, material_key, asset_anchor=asset_anchor)
+    _author_material_metadata(material, defaults, texture_set)
+    if texture_set is not None:
+        textured_material_path = f"{material_path}_textured"
+        textured_material = _author_mdl_material(stage, textured_material_path, defaults, texture_set)
+        material.GetPrim().CreateRelationship("organiq:texturedMaterial").SetTargets(
+            [textured_material.GetPrim().GetPath()]
+        )
+    return material
+
+
+def _author_material_metadata(material, defaults: TissueDefaults, texture_set: TissueTextureSet | None) -> None:
+    from pxr import Sdf
+
+    material.GetPrim().CreateAttribute("organiq:semanticClass", Sdf.ValueTypeNames.String).Set(defaults.semantic_class)
+    material.GetPrim().CreateAttribute("organiq:opacity", Sdf.ValueTypeNames.Float).Set(float(defaults.opacity))
+    if texture_set is not None:
+        material.GetPrim().CreateAttribute("organiq:diffuseTexture", Sdf.ValueTypeNames.Asset).Set(
+            Sdf.AssetPath(_asset(texture_set.diffuse, texture_set.asset_anchor))
+        )
+        material.GetPrim().CreateAttribute("organiq:normalTexture", Sdf.ValueTypeNames.Asset).Set(
+            Sdf.AssetPath(_asset(texture_set.normal, texture_set.asset_anchor))
+        )
+
+
+def _author_mdl_material(stage, material_path: str, defaults: TissueDefaults, texture_set: TissueTextureSet):
+    from pxr import Gf, Sdf, UsdShade
+
+    material = UsdShade.Material.Define(stage, material_path)
     shader = UsdShade.Shader.Define(stage, f"{material_path}/shader")
     shader_out = shader.CreateOutput("out", Sdf.ValueTypeNames.Token)
 
@@ -41,32 +74,26 @@ def create_visual_material(
     shader.CreateInput("project_uvw", Sdf.ValueTypeNames.Bool).Set(True)
     shader.CreateInput("texture_scale", Sdf.ValueTypeNames.Float2).Set(Gf.Vec2f(*defaults.texture_scale))
     shader.CreateInput("texture_translate", Sdf.ValueTypeNames.Float2).Set(Gf.Vec2f(0.0, 0.0))
-
-    texture_set = ensure_tissue_textures(defaults, texture_dir, material_key)
-    if texture_set is not None:
-        shader.CreateInput("diffuse_texture", Sdf.ValueTypeNames.Asset).Set(Sdf.AssetPath(_asset(texture_set.diffuse)))
-        shader.CreateInput("normalmap_texture", Sdf.ValueTypeNames.Asset).Set(Sdf.AssetPath(_asset(texture_set.normal)))
-        shader.CreateInput("bump_factor", Sdf.ValueTypeNames.Float).Set(float(defaults.normal_strength))
-        shader.CreateInput("detail_normalmap_texture", Sdf.ValueTypeNames.Asset).Set(
-            Sdf.AssetPath(_asset(texture_set.normal))
-        )
-        shader.CreateInput("detail_bump_factor", Sdf.ValueTypeNames.Float).Set(float(defaults.detail_normal_strength))
-
-    if defaults.opacity < 0.999:
-        shader.CreateInput("enable_opacity", Sdf.ValueTypeNames.Bool).Set(True)
-        shader.CreateInput("opacity_constant", Sdf.ValueTypeNames.Float).Set(float(defaults.opacity))
-        shader.CreateInput("opacity_threshold", Sdf.ValueTypeNames.Float).Set(0.0)
+    shader.CreateInput("diffuse_texture", Sdf.ValueTypeNames.Asset).Set(
+        Sdf.AssetPath(_asset(texture_set.diffuse, texture_set.asset_anchor))
+    )
+    shader.CreateInput("normalmap_texture", Sdf.ValueTypeNames.Asset).Set(
+        Sdf.AssetPath(_asset(texture_set.normal, texture_set.asset_anchor))
+    )
+    shader.CreateInput("bump_factor", Sdf.ValueTypeNames.Float).Set(float(defaults.normal_strength))
+    shader.CreateInput("detail_normalmap_texture", Sdf.ValueTypeNames.Asset).Set(
+        Sdf.AssetPath(_asset(texture_set.normal, texture_set.asset_anchor))
+    )
+    shader.CreateInput("detail_bump_factor", Sdf.ValueTypeNames.Float).Set(float(defaults.detail_normal_strength))
+    shader.CreateInput("enable_opacity", Sdf.ValueTypeNames.Bool).Set(defaults.opacity < 0.999)
+    shader.CreateInput("enable_opacity_texture", Sdf.ValueTypeNames.Bool).Set(False)
+    shader.CreateInput("opacity_constant", Sdf.ValueTypeNames.Float).Set(float(defaults.opacity))
+    shader.CreateInput("opacity_threshold", Sdf.ValueTypeNames.Float).Set(0.0)
 
     material.CreateSurfaceOutput("mdl").ConnectToSource(shader_out)
-    material.GetPrim().CreateAttribute("organiq:semanticClass", Sdf.ValueTypeNames.String).Set(defaults.semantic_class)
-    material.GetPrim().CreateAttribute("organiq:opacity", Sdf.ValueTypeNames.Float).Set(float(defaults.opacity))
-    if texture_set is not None:
-        material.GetPrim().CreateAttribute("organiq:diffuseTexture", Sdf.ValueTypeNames.Asset).Set(
-            Sdf.AssetPath(_asset(texture_set.diffuse))
-        )
-        material.GetPrim().CreateAttribute("organiq:normalTexture", Sdf.ValueTypeNames.Asset).Set(
-            Sdf.AssetPath(_asset(texture_set.normal))
-        )
+    material.CreateVolumeOutput("mdl").ConnectToSource(shader_out)
+    material.CreateDisplacementOutput("mdl").ConnectToSource(shader_out)
+    _author_material_metadata(material, defaults, texture_set)
     return material
 
 
@@ -94,6 +121,7 @@ def ensure_tissue_textures(
     defaults: TissueDefaults,
     texture_dir: str | Path | None,
     material_key: str | None = None,
+    asset_anchor: str | Path | None = None,
 ) -> TissueTextureSet | None:
     if texture_dir is None:
         return None
@@ -107,14 +135,15 @@ def ensure_tissue_textures(
     safe_key = _safe_texture_name(material_key or defaults.name)
     diffuse = output_dir / f"{safe_key}_{defaults.surface_detail}_albedo.png"
     normal = output_dir / f"{safe_key}_{defaults.surface_detail}_normal.png"
+    anchor = Path(asset_anchor) if asset_anchor is not None else None
     if diffuse.exists() and normal.exists():
-        return TissueTextureSet(diffuse=diffuse, normal=normal)
+        return TissueTextureSet(diffuse=diffuse, normal=normal, asset_anchor=anchor)
 
     albedo, height = _build_texture_arrays(np, defaults, safe_key)
     normal_rgb = _normal_map_from_height(np, height, defaults.normal_strength)
     _write_png(diffuse, (np.clip(albedo, 0.0, 1.0) * 255.0).astype(np.uint8))
     _write_png(normal, (np.clip(normal_rgb, 0.0, 1.0) * 255.0).astype(np.uint8))
-    return TissueTextureSet(diffuse=diffuse, normal=normal)
+    return TissueTextureSet(diffuse=diffuse, normal=normal, asset_anchor=anchor)
 
 
 def _build_texture_arrays(np, defaults: TissueDefaults, key: str):
@@ -218,5 +247,11 @@ def _safe_texture_name(value: str) -> str:
     return name or "tissue"
 
 
-def _asset(path: Path) -> str:
-    return path.resolve().as_posix()
+def _asset(path: Path, anchor: Path | None = None) -> str:
+    resolved = path.resolve()
+    if anchor is not None:
+        try:
+            return Path(os.path.relpath(resolved, anchor.resolve())).as_posix()
+        except ValueError:
+            pass
+    return resolved.as_posix()

@@ -1,4 +1,4 @@
-# physics defaults
+# Physics defaults
 
 Organiq authors a metre and kilogram USD stage. Rigid mass is written with `UsdPhysics.MassAPI` density. Deformable tissue materials are written with the current OmniPhysics deformable material attributes.
 
@@ -21,7 +21,7 @@ Organiq authors a metre and kilogram USD stage. Rigid mass is written with `UsdP
 
 The density basis follows ICRU 44/46 tissue tables and ICRP 110-style organ density tables. Reference values used directly include adipose 0.95 g/cm3, brain 1.04, kidney 1.05, liver 1.06, spleen 1.06, heart 1.06, blood 1.06, skin 1.09, spongiosa 1.18 and cortical bone 1.92. Organiq keeps lung near the inflated-tissue prior and maps cortical/trabecular bone labels to rigid bodies.
 
-PhysX deformable material priors keep Poisson ratios below 0.5 and write Young's modulus per tissue class. This matches the PhysX FEM convention where Young's modulus controls stiffness and Poisson ratio controls volume preservation. The exported prims also carry deformable hexahedral resolution, damping, density, smoothing and semantic metadata so the authored USD remains inspectable outside the extension. The CT-derived `skin_shell` is exported as a surface collision envelope rather than a volume deformable because it is a thin exterior shell, not a filled anatomical volume.
+PhysX deformable material priors keep Poisson ratios below 0.5 and write Young's modulus per tissue class. Soft tissue is authored as an OmniPhysics surface deformable on the visible triangular mesh. The exported prims carry surface rest-shape points, triangle indices, damping, density, smoothing and semantic metadata so the authored USD remains inspectable outside the extension without auto-generating volume tetrahedra. The CT-derived `skin_shell` is exported as a surface collision envelope because it is a thin exterior shell, not a deformable organ.
 
 Organiq generates the outer skin shell from the CT body envelope using a -550 HU body threshold, largest-component clean-up, hole filling and a 2 mm shell voxel count. The mesh is generated from the filled body envelope so Isaac receives a continuous exterior surface rather than a fragmented label mask.
 

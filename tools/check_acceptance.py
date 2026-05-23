@@ -15,6 +15,7 @@ def main() -> int:
     checks: list[dict[str, str]] = []
 
     manifest = EXT_ROOT / "config" / "extension.toml"
+    extension_readme = EXT_ROOT / "docs" / "README.md"
     extension = EXT_ROOT / "com" / "chrisvoncsefalvay" / "organiq" / "extension.py"
     workflow = EXT_ROOT / "com" / "chrisvoncsefalvay" / "organiq" / "workflow.py"
     dicom = EXT_ROOT / "com" / "chrisvoncsefalvay" / "organiq" / "dicom.py"
@@ -22,13 +23,20 @@ def main() -> int:
     meshing = EXT_ROOT / "com" / "chrisvoncsefalvay" / "organiq" / "meshing.py"
     physics = EXT_ROOT / "com" / "chrisvoncsefalvay" / "organiq" / "physics.py"
     usd_writer = EXT_ROOT / "com" / "chrisvoncsefalvay" / "organiq" / "usd_writer.py"
+    viewport = EXT_ROOT / "com" / "chrisvoncsefalvay" / "organiq" / "viewport.py"
     dependencies = EXT_ROOT / "com" / "chrisvoncsefalvay" / "organiq" / "dependencies.py"
     jobs = EXT_ROOT / "com" / "chrisvoncsefalvay" / "organiq" / "jobs.py"
     extension_version = _extension_version(manifest)
 
     _check_file(checks, manifest)
     _check_text(checks, manifest, "com.chrisvoncsefalvay.organiq", "extension id")
+    _check_text(checks, manifest, 'description = "Sim Ready anatomy from DICOM volumes"', "product description")
+    _check_text(checks, extension, "Sim Ready anatomy from DICOM volumes", "UI product tagline")
+    _check_text(checks, extension_readme, "Sim Ready anatomy from DICOM volumes", "extension README product tagline")
+    _check_absent_text(checks, extension_readme, "The workflow frames are", "extension README avoids operator workflow list")
+    _check_absent_text(checks, extension_readme, "CT DICOM to MONAI segmentation", "old procedural description removed")
     _check_text(checks, manifest, '"omni.timeline"', "timeline dependency")
+    _check_text(checks, manifest, '"omni.kit.window.content_browser"', "Content browser dependency")
     _check_text(checks, manifest, '"omni.physx.bundle"', "PhysX bundle dependency")
     _check_text(checks, manifest, '"omni.physics.stageupdate"', "physics stage update dependency")
     _check_repo_absent(
@@ -46,17 +54,22 @@ def main() -> int:
 
     _check_file(checks, extension)
     for frame in (
-        "0. environment preflight",
-        "1. load DICOM folder",
-        "2. segment volume",
-        "3. select objects to mesh",
-        "4. mesh selected objects",
-        "5. turn meshes into USD",
-        "6. instantiate with physics",
+        "0. Environment preflight",
+        "1. Load DICOM folder",
+        "2. Segment volume",
+        "3. Select objects to mesh",
+        "4. Mesh selected objects",
+        "5. Turn meshes into USD",
+        "6. Instantiate with physics",
     ):
         _check_text(checks, extension, frame, f"workflow frame: {frame}")
     _check_text(checks, extension, "FilePickerDialog", "folder and file browser buttons")
     _check_text(checks, extension, "ui.TreeView", "grouped label tree")
+    _check_text(checks, extension, "PANEL_CONTENT_WIDTH", "fixed panel content width")
+    _check_text(checks, extension, "PREVIEW_STRIP_WIDTH", "three-view CT preview strip width")
+    _check_text(checks, extension, "FLEX_WIDTH", "dynamic middle column width")
+    _check_text(checks, extension, "_expand_label_tree", "organ systems unfold on load")
+    _check_text(checks, extension, "expand_on_branch_click", "organ system branch click")
     _check_text(checks, extension, "ui.ProgressBar", "percent progress bar")
     _check_text(checks, jobs, "ActionProgress", "work-unit progress tracker")
     _check_absent_text(checks, extension, "current + step", "animated fake progress removed")
@@ -67,6 +80,10 @@ def main() -> int:
     _check_absent_text(checks, segmentation, '"pediatric_abdominal_ct_segmentation"', "paediatric abdominal MONAI preset removed")
     _check_text(checks, extension, "marching cubes", "marching cubes mesher dropdown")
     _check_text(checks, extension, "ui.ImageWithProvider", "loaded CT projection previews")
+    _check_text(checks, REPO_ROOT / "source" / "extensions" / "com.chrisvoncsefalvay.organiq" / "com" / "chrisvoncsefalvay" / "organiq" / "previews.py", "slice_spacing, row_spacing, col_spacing", "physical CT preview spacing")
+    _check_text(checks, extension, "toggle_bookmark_from_path", "Content browser output bookmark")
+    _check_text(checks, extension, "navigate_to_async", "Content browser output navigation")
+    _check_text(checks, extension, "select_items_async", "Content browser USD selection")
     _check_text(checks, extension, f'EXTENSION_VERSION = "{extension_version}"', "visible extension version")
     _check_text(checks, extension, "COMPLETE_FRAME_STYLE", "completed section heading colour")
     _check_text(checks, extension, "WORKFLOW_SECTIONS", "single-open workflow sequence")
@@ -89,6 +106,14 @@ def main() -> int:
     _check_text(checks, dicom, "_slice_normal_from_header", "orientation-aware DICOM slice sort")
     _check_text(checks, dicom, "_nifti_affine", "orientation-aware NIfTI affine")
     _check_text(checks, usd_writer, "_remove_preview_prims", "final instantiation removes previews")
+    _check_text(checks, usd_writer, "instanceableReferenceTarget", "USD component is an instanceable target")
+    _check_text(checks, usd_writer, "SetInstanceable(True)", "stage instantiation uses instanceable references")
+    _check_text(checks, REPO_ROOT / "tools" / "check_usd_export.py", "material:binding:full", "full-quality material binding verified")
+    _check_text(checks, usd_writer, "PhysicsMaterials", "component-local physics material scope")
+    _check_text(checks, REPO_ROOT / "source" / "extensions" / "com.chrisvoncsefalvay.organiq" / "com" / "chrisvoncsefalvay" / "organiq" / "materials.py", "os.path.relpath", "portable relative texture assets")
+    _check_text(checks, REPO_ROOT / "tools" / "check_usd_asset_quality.py", "component composes as an instanceable reference", "current USD quality gate")
+    _check_text(checks, viewport, "frame_viewport=True", "viewport framing remains explicit")
+    _check_text(checks, viewport, "camera_framed", "instantiated USD camera framing")
     _check_text(checks, usd_writer, "Gf.Vec3i", "SDF metadata uses explicit Int3 values")
     _check_text(checks, segmentation, "displayable_configs#highres", "whole-body high-resolution MONAI override")
     _check_text(checks, segmentation, "MONAI output contained no anatomy labels", "empty MONAI output guard")
@@ -100,8 +125,10 @@ def main() -> int:
     _check_text(checks, meshing, "_compute_vertex_normals", "mesh normal computation")
     _check_text(checks, physics, "apply_surface_collision_shell", "skin shell collision path")
     _check_text(checks, physics, "_make_visual_mesh_renderable", "physics meshes remain renderable")
-    _check_text(checks, physics, "deformablePhysicsProxy", "deformables use hidden physics proxy")
-    _check_text(checks, physics, "_copy_mesh_for_cooking", "deformable cooking mesh is decoupled")
+    _check_text(checks, physics, "set_physics_surface_deformable_body", "soft tissues use surface deformables")
+    _check_text(checks, physics, "organiq:volumeTetCooking", "soft tissues disable volume tet cooking")
+    _check_absent_text(checks, physics, "create_auto_volume_deformable_hierarchy", "volume auto-tet cooking removed")
+    _check_absent_text(checks, physics, "_copy_mesh_for_cooking", "deformable cooking mesh removed")
     _check_text(checks, usd_writer, 'simulation_mode == "surface_shell"', "skin shell avoids auto-tet cooking")
     _check_text(checks, usd_writer, "organiq:meanHounsfield", "mean Hounsfield USD custom attribute")
     _check_text(checks, segmentation, "_run_bounded_subprocess", "bounded MONAI subprocess runner")
@@ -116,6 +143,10 @@ def main() -> int:
 
     _check_dicom_report(checks)
     _check_runtime_report(checks)
+    _check_visibility_report(checks)
+    _check_usd_asset_quality_report(checks)
+    _check_exported_usd_import_report(checks)
+    _check_content_browser_report(checks)
     _check_usd_artifacts(checks)
     _check_window_report(checks, extension_version)
 
@@ -255,6 +286,102 @@ def _check_runtime_report(checks: list[dict[str, str]]) -> None:
         f"paths={len(renderable_paths)}",
     )
     _record(checks, "runtime viewport capture", bool(report.get("capture_ok")) and capture_path.exists(), str(capture_path))
+
+
+def _check_visibility_report(checks: list[dict[str, str]]) -> None:
+    report_path = BUILD_ROOT / "organiq_instantiated_usd_visibility_check.json"
+    report = _read_json(report_path)
+    _record(checks, "instantiated USD visibility report", report is not None, _path_evidence(report_path))
+    if report is None:
+        return
+
+    capture_path = Path(str(report.get("capture_path", "")))
+    capture_stats = report.get("capture_stats", {})
+    if not isinstance(capture_stats, dict):
+        capture_stats = {}
+    tissue_pixels = int(capture_stats.get("visible_tissue_pixels", capture_stats.get("red_tissue_pixels", 0)) or 0)
+    width_fraction = float(capture_stats.get("tissue_bbox_width_fraction", 0.0) or 0.0)
+    height_fraction = float(capture_stats.get("tissue_bbox_height_fraction", 0.0) or 0.0)
+
+    _record(checks, "instantiated USD visibility status", report.get("status") == "ok", str(report.get("status")))
+    _record(checks, "instantiated USD capture exists", capture_path.exists(), str(capture_path))
+    _record(checks, "instantiated USD tissue visible", tissue_pixels >= 5000, f"pixels={tissue_pixels}")
+    _record(
+        checks,
+        "instantiated USD not tiny",
+        width_fraction >= 0.12 and height_fraction >= 0.10,
+        f"bbox={width_fraction:.3f}x{height_fraction:.3f}",
+    )
+    _record(
+        checks,
+        "instantiated USD not cropped",
+        width_fraction <= 0.95 and height_fraction <= 0.90,
+        f"bbox={width_fraction:.3f}x{height_fraction:.3f}",
+    )
+
+
+def _check_exported_usd_import_report(checks: list[dict[str, str]]) -> None:
+    report_path = BUILD_ROOT / "organiq_exported_usd_import_visibility_check.json"
+    report = _read_json(report_path)
+    _record(checks, "exported USD direct import report", report is not None, _path_evidence(report_path))
+    if report is None:
+        return
+
+    capture_path = Path(str(report.get("capture_path", "")))
+    capture_stats = report.get("capture_stats", {})
+    if not isinstance(capture_stats, dict):
+        capture_stats = {}
+    tissue_pixels = int(capture_stats.get("visible_tissue_pixels", 0) or 0)
+    width_fraction = float(capture_stats.get("tissue_bbox_width_fraction", 0.0) or 0.0)
+    height_fraction = float(capture_stats.get("tissue_bbox_height_fraction", 0.0) or 0.0)
+
+    _record(checks, "exported USD direct import status", report.get("status") == "ok", str(report.get("status")))
+    _record(checks, "exported USD direct import capture exists", capture_path.exists(), str(capture_path))
+    _record(checks, "exported USD direct import visible", tissue_pixels >= 5000, f"pixels={tissue_pixels}")
+    _record(
+        checks,
+        "exported USD direct import not tiny",
+        width_fraction >= 0.12 and height_fraction >= 0.10,
+        f"bbox={width_fraction:.3f}x{height_fraction:.3f}",
+    )
+
+
+def _check_usd_asset_quality_report(checks: list[dict[str, str]]) -> None:
+    report_path = BUILD_ROOT / "organiq_usd_asset_quality_check.json"
+    report = _read_json(report_path)
+    _record(checks, "USD asset quality report", report is not None, _path_evidence(report_path))
+    if report is None:
+        return
+    check_records = report.get("checks", [])
+    failed = [
+        f"{record.get('name')}: {record.get('evidence')}"
+        for record in check_records
+        if isinstance(record, dict) and record.get("status") != "ok"
+    ]
+    _record(checks, "USD asset quality status", report.get("status") == "ok", str(report.get("status")))
+    _record(checks, "USD asset quality checks", not failed, "; ".join(failed[:5]) if failed else "ok")
+
+
+def _check_content_browser_report(checks: list[dict[str, str]]) -> None:
+    report_path = BUILD_ROOT / "organiq_content_browser_check.json"
+    report = _read_json(report_path)
+    _record(checks, "Content browser report", report is not None, _path_evidence(report_path))
+    if report is None:
+        return
+
+    selections = [str(path) for path in report.get("selections", [])]
+    usd_name = Path(str(report.get("usd_path", ""))).name
+    current_directory = str(report.get("current_directory", ""))
+    _record(checks, "Content browser status", report.get("status") == "ok", str(report.get("status")))
+    _record(checks, "Content browser output bookmark", bool(report.get("bookmarked")), str(report.get("bookmarked")))
+    _record(checks, "Content browser output visible", bool(report.get("revealed")), str(report.get("revealed")))
+    _record(checks, "Content browser output directory", bool(current_directory), current_directory)
+    _record(
+        checks,
+        "Content browser USD selected",
+        bool(usd_name) and any(Path(path.replace("file://", "")).name == usd_name for path in selections),
+        ",".join(selections),
+    )
 
 
 def _check_usd_artifacts(checks: list[dict[str, str]]) -> None:

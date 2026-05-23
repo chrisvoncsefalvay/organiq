@@ -1,4 +1,4 @@
-# contributing
+# Contributing
 
 Keep the repository release-ready. Changes should preserve the extension structure under `source/extensions/com.chrisvoncsefalvay.organiq` and keep `config/extension.toml`, `pyproject.toml` and the visible extension version in sync.
 

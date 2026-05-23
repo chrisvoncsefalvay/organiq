@@ -16,7 +16,12 @@ EXT_ROOT = REPO_ROOT / "source" / "extensions" / "com.chrisvoncsefalvay.organiq"
 BUILD_ROOT = REPO_ROOT / "build"
 sys.path.insert(0, str(EXT_ROOT))
 
-from com.chrisvoncsefalvay.organiq.extension import _LabelSelectionTreeDelegate, _LabelSelectionTreeModel
+from com.chrisvoncsefalvay.organiq.extension import _LabelSelectionTreeDelegate, _LabelSelectionTreeModel, _flex_width
+from com.chrisvoncsefalvay.organiq.extension import (
+    PANEL_CONTENT_WIDTH,
+    TREE_CHECKBOX_COLUMN_WIDTH,
+    TREE_LABEL_MIN_WIDTH,
+)
 from com.chrisvoncsefalvay.organiq.label_groups import group_segment_labels
 from com.chrisvoncsefalvay.organiq.models import SegmentLabel
 from com.chrisvoncsefalvay.organiq.workflow import OrganiqWorkflow
@@ -63,7 +68,11 @@ async def _run() -> int:
             root_visible=False,
             header_visible=False,
             columns_resizable=False,
-            column_widths=[30, ui.Percent(100)],
+            column_widths=[TREE_CHECKBOX_COLUMN_WIDTH, _flex_width()],
+            min_column_widths=[TREE_CHECKBOX_COLUMN_WIDTH, TREE_LABEL_MIN_WIDTH],
+            fixed_width_columns=[True, False],
+            expand_on_branch_click=True,
+            width=_flex_width(),
             height=320,
             keep_alive=True,
         )
@@ -79,6 +88,10 @@ async def _run() -> int:
     _require(any(item.group.key == "vertebrae" for item in root_items), "vertebrae group missing")
     _require(any(item.group.key == "ribs" for item in root_items), "ribs group missing")
     _require(any(item.group.key == "other" for item in root_items), "other group missing")
+    for item in root_items:
+        tree_view.set_expanded(item, True, False)
+    for _ in range(2):
+        await app.next_update_async()
 
     lung_item = next(item for item in root_items if item.group.key == "lungs")
     lung_values = tuple(label.value for label in lung_item.group.labels)
@@ -97,6 +110,9 @@ async def _run() -> int:
     report = {
         "status": "ok",
         "groups": [item.group.key for item in root_items],
+        "expanded_groups": [item.group.key for item in root_items],
+        "tree_width": PANEL_CONTENT_WIDTH,
+        "tree_label_min_width": TREE_LABEL_MIN_WIDTH,
         "selected_count": len(harness._workflow.selected_label_values),
     }
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")

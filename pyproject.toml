@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "organiq"
 version = "0.1.0"
-description = "Isaac extension for CT DICOM segmentation, meshing and physics authoring"
+description = "Sim Ready anatomy from DICOM volumes"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

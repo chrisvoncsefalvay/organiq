@@ -25,7 +25,7 @@ def create_deformable_physics_material(stage, material_path: str, defaults: Tiss
 
     if deformableUtils is not None:
         try:
-            deformableUtils.add_deformable_material(
+            deformableUtils.add_surface_deformable_material(
                 stage,
                 material_path,
                 density=float(defaults.density_kg_m3),
@@ -33,6 +33,10 @@ def create_deformable_physics_material(stage, material_path: str, defaults: Tiss
                 dynamic_friction=float(defaults.dynamic_friction),
                 youngs_modulus=float(defaults.youngs_modulus_pa or 5.0e5),
                 poissons_ratio=float(defaults.poissons_ratio or 0.45),
+                surface_thickness=_surface_thickness_m(defaults),
+                surface_stretch_stiffness=_surface_stretch_stiffness(defaults),
+                surface_shear_stiffness=_surface_stretch_stiffness(defaults) * 0.35,
+                surface_bend_stiffness=_surface_bend_stiffness(defaults),
             )
             return UsdShade.Material(stage.GetPrimAtPath(material_path))
         except Exception:
@@ -49,6 +53,17 @@ def create_deformable_physics_material(stage, material_path: str, defaults: Tiss
     )
     prim.CreateAttribute("omniphysics:poissonsRatio", Sdf.ValueTypeNames.Float).Set(
         float(defaults.poissons_ratio or 0.45)
+    )
+    _apply_api_if_available(prim, "OmniPhysicsSurfaceDeformableMaterialAPI")
+    prim.CreateAttribute("omniphysics:surfaceThickness", Sdf.ValueTypeNames.Float).Set(_surface_thickness_m(defaults))
+    prim.CreateAttribute("omniphysics:surfaceStretchStiffness", Sdf.ValueTypeNames.Float).Set(
+        _surface_stretch_stiffness(defaults)
+    )
+    prim.CreateAttribute("omniphysics:surfaceShearStiffness", Sdf.ValueTypeNames.Float).Set(
+        _surface_stretch_stiffness(defaults) * 0.35
+    )
+    prim.CreateAttribute("omniphysics:surfaceBendStiffness", Sdf.ValueTypeNames.Float).Set(
+        _surface_bend_stiffness(defaults)
     )
     return material
 
@@ -113,80 +128,48 @@ def apply_surface_collision_shell(stage, mesh_prim, defaults: TissueDefaults):
 
 
 def apply_deformable_body(stage, root_path: str, mesh_path: str, defaults: TissueDefaults):
-    from pxr import Sdf, UsdGeom, UsdPhysics
+    from pxr import UsdPhysics
 
     root_prim = stage.GetPrimAtPath(root_path)
     mesh_prim = stage.GetPrimAtPath(mesh_path)
     if not root_prim or not mesh_prim:
         return False
-    _author_deformable_resolution(root_prim, defaults)
+    _author_surface_deformable_metadata(root_prim, mesh_prim, defaults)
     _make_visual_mesh_renderable(mesh_prim)
-
-    physics_root_path = f"{root_path}/physics"
-    cooking_mesh_path = f"{physics_root_path}/cooking_mesh"
-    simulation_tet_path = f"{physics_root_path}/simulation_tet"
-    collision_tet_path = f"{physics_root_path}/collision_tet"
-    physics_root = UsdGeom.Xform.Define(stage, physics_root_path)
-    physics_root.GetPrim().CreateAttribute("organiq:role", Sdf.ValueTypeNames.Token).Set("deformablePhysicsProxy")
-    _hide_physics_proxy(physics_root.GetPrim())
-    cooking_mesh = _copy_mesh_for_cooking(stage, mesh_prim, cooking_mesh_path)
-    if cooking_mesh is not None:
-        _hide_physics_proxy(cooking_mesh.GetPrim())
 
     try:
         from omni.physx.scripts import deformableUtils
     except Exception:
         deformableUtils = None
 
-    if deformableUtils is not None and cooking_mesh is not None:
+    applied = False
+    if deformableUtils is not None:
         try:
-            ok = deformableUtils.create_auto_volume_deformable_hierarchy(
-                stage,
-                physics_root_path,
-                simulation_tet_path,
-                collision_tet_path,
-                cooking_mesh_path,
-                simulation_hex_mesh_enabled=True,
-                cooking_src_simplification_enabled=True,
-                set_visibility_with_guide_purpose=True,
-            )
-            if ok:
-                _author_deformable_resolution(physics_root.GetPrim(), defaults)
-                _hide_physics_proxy(stage.GetPrimAtPath(simulation_tet_path))
-                _hide_physics_proxy(stage.GetPrimAtPath(collision_tet_path))
-                _author_visual_deformable_pose(mesh_prim)
-                _apply_visual_collision(mesh_prim)
-                _make_visual_mesh_renderable(mesh_prim)
-                return str(physics_root.GetPath())
+            applied = bool(deformableUtils.set_physics_surface_deformable_body(stage, mesh_path))
         except Exception:
-            pass
+            applied = False
 
-    if cooking_mesh is not None:
-        _apply_api_if_available(physics_root.GetPrim(), "PhysxAutoDeformableBodyAPI")
-        _apply_api_if_available(physics_root.GetPrim(), "PhysxAutoDeformableHexahedralMeshAPI")
-        _apply_api_if_available(physics_root.GetPrim(), "OmniPhysicsDeformableBodyAPI")
-        physics_root.GetPrim().CreateRelationship("physxDeformableBody:cookingSourceMesh").SetTargets(
-            [cooking_mesh.GetPath()]
-        )
-        _author_deformable_resolution(physics_root.GetPrim(), defaults)
+    if not applied:
+        _apply_api_if_available(mesh_prim, "OmniPhysicsDeformableBodyAPI")
+        _apply_api_if_available(mesh_prim, "OmniPhysicsSurfaceDeformableSimAPI")
+        UsdPhysics.CollisionAPI.Apply(mesh_prim)
 
+    _author_surface_rest_shape(mesh_prim)
     _author_visual_deformable_pose(mesh_prim)
-    _apply_visual_collision(mesh_prim)
     _make_visual_mesh_renderable(mesh_prim)
-    return str(physics_root.GetPath())
+    return str(root_prim.GetPath())
 
 
-def _author_deformable_resolution(root_prim, defaults: TissueDefaults) -> None:
+def _author_surface_deformable_metadata(root_prim, mesh_prim, defaults: TissueDefaults) -> None:
     from pxr import Sdf
 
-    resolution = max(4, min(int(defaults.deformable_resolution), 64))
-    root_prim.CreateAttribute("physxDeformable:simulationHexahedralResolution", Sdf.ValueTypeNames.UInt).Set(resolution)
-    root_prim.CreateAttribute("physxDeformableBody:resolution", Sdf.ValueTypeNames.UInt).Set(resolution)
-    root_prim.CreateAttribute("physxDeformable:numberOfTetsPerHex", Sdf.ValueTypeNames.UInt).Set(5)
-    root_prim.CreateAttribute("physxDeformable:vertexVelocityDamping", Sdf.ValueTypeNames.Float).Set(
-        float(defaults.damping_scale)
-    )
-    root_prim.CreateAttribute("physxDeformable:solverPositionIterationCount", Sdf.ValueTypeNames.Int).Set(32)
+    for prim in (root_prim, mesh_prim):
+        prim.CreateAttribute("organiq:deformableAuthoring", Sdf.ValueTypeNames.Token).Set("surface_deformable")
+        prim.CreateAttribute("organiq:volumeTetCooking", Sdf.ValueTypeNames.Bool).Set(False)
+        prim.CreateAttribute("physxDeformable:vertexVelocityDamping", Sdf.ValueTypeNames.Float).Set(
+            float(defaults.damping_scale)
+        )
+        prim.CreateAttribute("physxDeformable:solverPositionIterationCount", Sdf.ValueTypeNames.Int).Set(32)
 
 
 def _make_visual_mesh_renderable(mesh_prim) -> None:
@@ -210,51 +193,59 @@ def _author_visual_deformable_pose(mesh_prim) -> None:
     mesh_prim.CreateAttribute("deformablePose:default:omniphysics:points", Sdf.ValueTypeNames.Point3fArray).Set(points)
 
 
-def _apply_visual_collision(mesh_prim) -> None:
-    from pxr import UsdPhysics
+def _author_surface_rest_shape(mesh_prim) -> None:
+    from pxr import Gf, Sdf, UsdGeom
 
-    UsdPhysics.CollisionAPI.Apply(mesh_prim)
-    mesh_collision = UsdPhysics.MeshCollisionAPI.Apply(mesh_prim)
-    mesh_collision.CreateApproximationAttr().Set("meshSimplification")
-
-
-def _hide_physics_proxy(prim) -> None:
-    if not prim:
+    mesh = UsdGeom.Mesh(mesh_prim)
+    if not mesh:
         return
-    from pxr import UsdGeom
-
-    imageable = UsdGeom.Imageable(prim)
-    if not imageable:
-        return
-    imageable.CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
-    imageable.CreatePurposeAttr().Set(UsdGeom.Tokens.guide)
-
-
-def _copy_mesh_for_cooking(stage, source_prim, target_path: str):
-    from pxr import UsdGeom
-
-    source = UsdGeom.Mesh(source_prim)
-    if not source:
-        return None
-    target = UsdGeom.Mesh.Define(stage, target_path)
-    points = source.GetPointsAttr().Get()
-    face_counts = source.GetFaceVertexCountsAttr().Get()
-    face_indices = source.GetFaceVertexIndicesAttr().Get()
+    points = mesh.GetPointsAttr().Get()
+    face_counts = mesh.GetFaceVertexCountsAttr().Get()
+    face_indices = mesh.GetFaceVertexIndicesAttr().Get()
     if not points or not face_counts or not face_indices:
-        return None
-    target.CreatePointsAttr(points)
-    target.CreateFaceVertexCountsAttr(face_counts)
-    target.CreateFaceVertexIndicesAttr(face_indices)
-    normals = source.GetNormalsAttr().Get()
-    if normals:
-        target.CreateNormalsAttr(normals)
-        target.SetNormalsInterpolation(source.GetNormalsInterpolation())
-    extent = source.GetExtentAttr().Get()
-    if extent:
-        target.CreateExtentAttr().Set(extent)
-    target.CreateSubdivisionSchemeAttr().Set(UsdGeom.Tokens.none)
-    target.CreateDoubleSidedAttr().Set(True)
-    return target
+        return
+
+    tri_indices = []
+    cursor = 0
+    for face_count in face_counts:
+        count = int(face_count)
+        if count != 3:
+            return
+        tri_indices.append(
+            Gf.Vec3i(
+                int(face_indices[cursor]),
+                int(face_indices[cursor + 1]),
+                int(face_indices[cursor + 2]),
+            )
+        )
+        cursor += count
+    if not tri_indices:
+        return
+
+    rest_points_attr = mesh_prim.GetAttribute("omniphysics:restShapePoints")
+    if rest_points_attr:
+        rest_points_attr.Set(points)
+    else:
+        mesh_prim.CreateAttribute("omniphysics:restShapePoints", Sdf.ValueTypeNames.Point3fArray).Set(points)
+
+    tri_indices_attr = mesh_prim.GetAttribute("omniphysics:restTriVtxIndices")
+    if tri_indices_attr:
+        tri_indices_attr.Set(tri_indices)
+    else:
+        mesh_prim.CreateAttribute("omniphysics:restTriVtxIndices", Sdf.ValueTypeNames.Int3Array).Set(tri_indices)
+
+
+def _surface_thickness_m(defaults: TissueDefaults) -> float:
+    return max(0.001, min(float(defaults.mesh_smoothing_mm) * 0.001, 0.006))
+
+
+def _surface_stretch_stiffness(defaults: TissueDefaults) -> float:
+    return max(1.0, float(defaults.youngs_modulus_pa or 5.0e5))
+
+
+def _surface_bend_stiffness(defaults: TissueDefaults) -> float:
+    thickness = _surface_thickness_m(defaults)
+    return max(0.001, _surface_stretch_stiffness(defaults) * thickness * thickness)
 
 
 def _apply_api_if_available(prim, schema_name: str, instance_name: str | None = None) -> bool:

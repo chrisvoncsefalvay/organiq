@@ -1,4 +1,4 @@
-name: release
+name: Release
 
 on:
   push:
@@ -10,25 +10,25 @@ permissions:
 
 jobs:
   package:
-    name: package extension
+    name: Package extension
     runs-on: ubuntu-latest
 
     steps:
-      - name: checkout
+      - name: Check out
         uses: actions/checkout@v4
 
-      - name: set up python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
-      - name: install test dependencies
+      - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install --prefer-binary --constraint constraints/isaac-5.1.txt ".[dev]"
 
-      - name: verify tag matches manifest
+      - name: Verify tag matches manifest
         shell: bash
         run: |
           python - <<'PY'
@@ -44,7 +44,7 @@ jobs:
               raise SystemExit(f"Tag {actual} does not match manifest version {expected}")
           PY
 
-      - name: run release checks
+      - name: Run release checks
         run: |
           python -m pytest
           python tools/check_extension.py
@@ -52,7 +52,7 @@ jobs:
           python tools/package_extension.py --clean
           python tools/check_distribution.py --require-archives
 
-      - name: publish release assets
+      - name: Publish release assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

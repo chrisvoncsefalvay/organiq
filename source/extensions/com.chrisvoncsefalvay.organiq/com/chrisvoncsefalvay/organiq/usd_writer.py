@@ -45,7 +45,7 @@ def export_meshes_to_usd(
     if not meshes:
         raise ValueError("No meshes to export")
 
-    from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux, UsdPhysics, UsdShade
+    from pxr import Gf, Kind, Sdf, Usd, UsdGeom, UsdLux, UsdPhysics, UsdShade
 
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -61,9 +61,12 @@ def export_meshes_to_usd(
     world = UsdGeom.Xform.Define(stage, "/World")
     stage.SetDefaultPrim(world.GetPrim())
     anatomy_root = UsdGeom.Xform.Define(stage, f"/World/{_safe_prim_name(scene_name)}")
-    looks_scope = UsdGeom.Scope.Define(stage, "/World/Looks")
-    physics_scope = UsdGeom.Scope.Define(stage, "/World/PhysicsMaterials")
+    looks_scope = UsdGeom.Scope.Define(stage, f"{anatomy_root.GetPath()}/Looks")
+    physics_scope = UsdGeom.Scope.Define(stage, f"{anatomy_root.GetPath()}/PhysicsMaterials")
     _ = looks_scope, physics_scope
+    _author_model_metadata(world.GetPrim(), scene_name, "assembly", Kind.Tokens.assembly, output)
+    _author_model_metadata(anatomy_root.GetPrim(), scene_name, "anatomyComponent", Kind.Tokens.component, output)
+    anatomy_root.GetPrim().CreateAttribute("organiq:instanceableReferenceTarget", Sdf.ValueTypeNames.Bool).Set(True)
     _author_physics_scene(stage)
 
     prim_paths: list[str] = []
@@ -80,15 +83,21 @@ def export_meshes_to_usd(
         name = _unique_name(_safe_prim_name(mesh.label_name), used_names)
         root_path = f"{anatomy_root.GetPath()}/{name}"
         mesh_path = f"{root_path}/mesh"
-        material_path = f"/World/Looks/{name}_material"
-        physics_material_path = f"/World/PhysicsMaterials/{name}_physics"
+        material_path = f"{anatomy_root.GetPath()}/Looks/{name}_material"
+        physics_material_path = f"{anatomy_root.GetPath()}/PhysicsMaterials/{name}_physics"
 
         root = UsdGeom.Xform.Define(stage, root_path)
+        Usd.ModelAPI(root.GetPrim()).SetKind(Kind.Tokens.subcomponent)
         usd_mesh = _define_mesh(stage, mesh_path, mesh, defaults)
-        material = create_visual_material(stage, material_path, defaults, texture_dir=texture_dir, material_key=name)
-        UsdShade.MaterialBindingAPI.Apply(usd_mesh.GetPrim()).Bind(
-            material, UsdShade.Tokens.strongerThanDescendants
+        material = create_visual_material(
+            stage,
+            material_path,
+            defaults,
+            texture_dir=texture_dir,
+            material_key=name,
+            asset_anchor=output.parent,
         )
+        _bind_visual_materials(stage, usd_mesh.GetPrim(), material, UsdShade)
         _author_semantics(root.GetPrim(), usd_mesh.GetPrim(), mesh, defaults)
 
         if defaults.simulation_mode == "rigid":
@@ -101,10 +110,10 @@ def export_meshes_to_usd(
             create_rigid_physics_material(stage, physics_material_path, defaults)
             bind_physics_material(stage, usd_mesh.GetPrim(), physics_material_path)
         else:
-            physics_root_path = apply_deformable_body(stage, str(root.GetPath()), str(usd_mesh.GetPath()), defaults)
+            deformable_path = apply_deformable_body(stage, str(root.GetPath()), str(usd_mesh.GetPath()), defaults)
             create_deformable_physics_material(stage, physics_material_path, defaults)
-            if physics_root_path and stage.GetPrimAtPath(physics_root_path):
-                bind_physics_material(stage, stage.GetPrimAtPath(physics_root_path), physics_material_path)
+            if deformable_path and stage.GetPrimAtPath(deformable_path):
+                bind_physics_material(stage, stage.GetPrimAtPath(deformable_path), physics_material_path)
             bind_physics_material(stage, root.GetPrim(), physics_material_path)
             bind_physics_material(stage, usd_mesh.GetPrim(), physics_material_path)
             deformable_count += 1
@@ -114,6 +123,9 @@ def export_meshes_to_usd(
         _report_progress(progress, index, total_steps, f"authored {index} of {len(meshes)} meshes")
 
     bounds = _bounds(scene_bounds)
+    _author_component_extents(world.GetPrim(), bounds, UsdGeom, Gf)
+    _author_component_extents(anatomy_root.GetPrim(), bounds, UsdGeom, Gf)
+    anatomy_root.GetPrim().CreateAttribute("organiq:meshCount", Sdf.ValueTypeNames.Int).Set(len(meshes))
     _author_scene_context(stage, bounds)
     _author_camera(stage, bounds)
 
@@ -176,21 +188,37 @@ def preview_meshes_on_stage(
 
 
 def instantiate_usd_on_stage(stage, usd_path: str | Path, prim_path: str = "/World/Organiq_instance") -> str:
-    from pxr import Sdf, UsdGeom
+    from pxr import Kind, Sdf, Usd, UsdGeom
 
     source_path = Path(usd_path).resolve()
     _remove_preview_prims(stage)
     if stage.GetPrimAtPath(prim_path):
         stage.RemovePrim(prim_path)
     root = UsdGeom.Xform.Define(stage, prim_path)
+    Usd.ModelAPI(root.GetPrim()).SetKind(Kind.Tokens.assembly)
     UsdGeom.Imageable(root.GetPrim()).CreateVisibilityAttr().Set(UsdGeom.Tokens.inherited)
-    references = root.GetPrim().GetReferences()
-    references.ClearReferences()
-    references.AddReference(str(source_path))
+    component_path = _source_component_path(source_path)
+    if component_path:
+        component_name = _safe_prim_name(Sdf.Path(component_path).name or "organiq")
+        component = UsdGeom.Xform.Define(stage, f"{root.GetPath()}/{component_name}")
+        Usd.ModelAPI(component.GetPrim()).SetKind(Kind.Tokens.component)
+        references = component.GetPrim().GetReferences()
+        references.ClearReferences()
+        references.AddReference(str(source_path), Sdf.Path(component_path))
+        component.GetPrim().SetInstanceable(True)
+        root.GetPrim().CreateAttribute("organiq:instanceableComponentPath", Sdf.ValueTypeNames.String).Set(
+            str(component.GetPath())
+        )
+    else:
+        references = root.GetPrim().GetReferences()
+        references.ClearReferences()
+        references.AddReference(str(source_path))
     _make_instance_visuals_renderable(stage, str(root.GetPath()))
     bounds = _label_mesh_bounds(stage, str(root.GetPath()))
+    _author_preview_lighting(stage, bounds, str(root.GetPath()))
     camera_path = f"{root.GetPath()}/view_camera"
     _author_camera(stage, bounds, camera_path=camera_path)
+    _author_physics_scene(stage)
     root.GetPrim().CreateAttribute("organiq:sourceUsd", Sdf.ValueTypeNames.Asset).Set(str(source_path))
     root.GetPrim().CreateAttribute("organiq:expectedMeshCount", Sdf.ValueTypeNames.Int).Set(
         _source_mesh_count(source_path)
@@ -207,7 +235,9 @@ def _make_instance_visuals_renderable(stage, root_path: str) -> None:
         return
     looks_path = f"{root_path}/Looks"
     UsdGeom.Scope.Define(stage, looks_path)
-    for prim in Usd.PrimRange(root_prim):
+    for prim in Usd.PrimRange(root_prim, Usd.TraverseInstanceProxies(Usd.PrimAllPrimsPredicate)):
+        if prim.IsInstanceProxy():
+            continue
         imageable = UsdGeom.Imageable(prim)
         if not imageable:
             continue
@@ -227,8 +257,6 @@ def _make_instance_visuals_renderable(stage, root_path: str) -> None:
 def _ensure_mesh_viewport_material(stage, looks_path: str, mesh_prim, label_name: str) -> None:
     from pxr import UsdShade
 
-    if _mesh_has_universal_surface_material(mesh_prim):
-        return
     parent = mesh_prim.GetParent()
     material_name = _safe_prim_name(str(parent.GetName()) if parent else label_name)
     material_path = f"{looks_path}/{material_name}_viewport_material"
@@ -284,8 +312,11 @@ def _label_mesh_bounds(stage, root_path: str) -> tuple[tuple[float, float, float
         useExtentsHint=False,
     )
     points: list[tuple[float, float, float]] = []
-    for prim in Usd.PrimRange(root_prim):
+    for prim in Usd.PrimRange(root_prim, Usd.TraverseInstanceProxies(Usd.PrimAllPrimsPredicate)):
         if not prim.IsA(UsdGeom.Mesh) or not prim.GetAttribute("organiq:labelName").Get():
+            continue
+        role = prim.GetAttribute("organiq:role").Get() if prim.GetAttribute("organiq:role") else None
+        if role == "deformablePhysicsProxy" or "/physics/" in str(prim.GetPath()):
             continue
         aligned = bbox_cache.ComputeWorldBound(prim).ComputeAlignedRange()
         if aligned.IsEmpty():
@@ -327,6 +358,22 @@ def _source_mesh_count(usd_path: Path) -> int:
         for prim in stage.Traverse()
         if prim.IsA(UsdGeom.Mesh) and prim.GetAttribute("organiq:labelName").Get()
     )
+
+
+def _source_component_path(usd_path: Path) -> str:
+    from pxr import Usd, UsdGeom
+
+    stage = Usd.Stage.Open(str(usd_path))
+    if stage is None:
+        return ""
+    for prim in stage.Traverse():
+        role_attr = prim.GetAttribute("organiq:assetRole")
+        if role_attr and role_attr.Get() == "anatomyComponent" and prim.IsA(UsdGeom.Xform):
+            return str(prim.GetPath())
+    fallback = stage.GetPrimAtPath("/World/organiq")
+    if fallback and fallback.IsA(UsdGeom.Xform):
+        return str(fallback.GetPath())
+    return ""
 
 
 def _define_mesh(stage, mesh_path: str, mesh: MeshArtifact, defaults: TissueDefaults):
@@ -423,9 +470,36 @@ def _author_physics_scene(stage):
         if physx_scene:
             physx_scene.CreateEnableGPUDynamicsAttr().Set(True)
             physx_scene.CreateTimeStepsPerSecondAttr().Set(120)
-            return
+        return
     scene.GetPrim().CreateAttribute("physxScene:enableGPUDynamics", Sdf.ValueTypeNames.Bool).Set(True)
     scene.GetPrim().CreateAttribute("physxScene:timeStepsPerSecond", Sdf.ValueTypeNames.Int).Set(120)
+
+
+def _author_model_metadata(prim, scene_name: str, role: str, kind_token, output: Path) -> None:
+    from pxr import Sdf, Usd
+
+    model_api = Usd.ModelAPI(prim)
+    model_api.SetKind(kind_token)
+    model_api.SetAssetName(scene_name)
+    model_api.SetAssetVersion("0.1.0")
+    prim.CreateAttribute("organiq:assetRole", Sdf.ValueTypeNames.Token).Set(role)
+    prim.CreateAttribute("organiq:assetFileName", Sdf.ValueTypeNames.String).Set(output.name)
+
+
+def _author_component_extents(prim, bounds, UsdGeom, Gf) -> None:
+    model_api = UsdGeom.ModelAPI.Apply(prim)
+    model_api.SetExtentsHint([Gf.Vec3f(*bounds[0]), Gf.Vec3f(*bounds[1])])
+
+
+def _bind_visual_materials(stage, mesh_prim, material, UsdShade) -> None:
+    binding_api = UsdShade.MaterialBindingAPI.Apply(mesh_prim)
+    binding_api.Bind(material, UsdShade.Tokens.strongerThanDescendants)
+    textured_targets = material.GetPrim().GetRelationship("organiq:texturedMaterial").GetTargets()
+    if not textured_targets:
+        return
+    textured_material = UsdShade.Material(stage.GetPrimAtPath(textured_targets[0]))
+    if textured_material and textured_material.GetPrim().IsValid():
+        binding_api.Bind(textured_material, UsdShade.Tokens.strongerThanDescendants, "full")
 
 
 def _author_scene_context(stage, bounds: tuple[tuple[float, float, float], tuple[float, float, float]]):
