@@ -2,7 +2,11 @@
 
 Sim Ready anatomy from DICOM volumes.
 
+![Organiq workflow preview](docs/assets/organiq-workflow-preview.png)
+
 Organiq turns DICOM volume data into organised anatomy assets for Isaac Sim. It gives simulation teams anatomical geometry with reusable USD structure, tissue-aware materials and physics metadata.
+
+## How to organ grind with Organiq
 
 The extension workflow is:
 
@@ -20,8 +24,6 @@ Organiq stages MONAI input volumes as a bundle-style `dataset_dir\imagesTs` fold
 If a manually supplied bundle name is not supported, or a cached bundle is missing the expected inference config, Organiq stops before inference and reports the unsupported name or missing file path.
 
 ## Workflow demo
-
-![Organiq workflow preview](docs/assets/organiq-workflow-preview.png)
 
 ![Organiq workflow demo](docs/assets/organiq-workflow-demo.gif)
 
