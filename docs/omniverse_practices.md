@@ -1,6 +1,10 @@
 # Omniverse practices
 
-Organiq follows Kit extension conventions, authors ordinary USD and keeps medical imaging dependencies optional until the workflow needs them. The exported scenes are simulation-first assets with complete material, physics, lighting and camera context.
+Organiq follows Kit extension conventions, authors ordinary USD and keeps medical imaging dependencies optional until the workflow needs them. 
+
+Or at least it tries its very best. 
+
+The exported scenes are simulation-first assets with complete material, physics, lighting and camera context.
 
 ## Materials
 
